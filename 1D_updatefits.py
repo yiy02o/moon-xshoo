@@ -1,66 +1,106 @@
 from moon_preMolecfit import *
+import shutil
 
 
-def copy_and_update_fits(directory, ARM):
+def copy_and_update_fits(directory, ARM, normalize=False, update=False):
     for folder in os.listdir(directory):
         if folder == 'README':
             pass
         else:
             for file in os.listdir(directory + '/' + folder):
                 if 'SCI_SLIT_FLUX_MERGE1D_' + ARM in file:
-                    # with fits.open(directory + '/' + folder + '/' + file) as hdu_list:
-                    print('aqui')
-                    # hdu_list.writeto('updated_' + file)
+                    # with fits.open(directory + '/' + folder + '/' + file) as hdu1D_list:
+                        # hdu1D_list.writeto(directory + '/' + folder + '/' + 'COPY_' + file)
+                    src = directory + '/' + folder + '/' + file
+                    dst = directory + '/' + folder + '/' + 'COPY_' + file
+                    shutil.copy(src, dst)
+                    break
+
+            if update:
+                upd_str = 'UPDATED_NORM_' if normalize else 'UPDATED_'
+                for file in os.listdir(directory + '/' + folder):
+                    if 'SCI_SLIT_FLUX_MERGE2D_' + ARM in file:
+                        with fits.open(directory + '/' + folder + '/' + file) as hdu2D_list:
+                            flux_2D = np.median(hdu2D_list[0].data, axis=0)
+                            std = np.std(hdu2D_list[0].data, axis=0)
+                            if normalize:
+                                idx_min, idx_max = -10_000, -8_000
+                                flux_test = flux_2D[idx_min:idx_max + 1]
+                                median_test_flux = np.median(flux_test)
+                                flux_2D = flux_2D/median_test_flux
+                        break
+
+                for file in os.listdir(directory + '/' + folder):
+                    if 'COPY_' in file and ARM in file:
+                        with fits.open(directory + '/' + folder + '/' + file, mode='update') as hdu_list:
+                            print(flux_2D)
+                            hdu_list[0].data = flux_2D
+                            hdu_list[1].data = std
+                        new_file_name = file.replace('COPY_', upd_str)
+                        old_dir = directory + '/' + folder + '/' + file
+                        new_dir = directory + '/' + folder + '/' + new_file_name
+                        os.rename(old_dir, new_dir)
+                        break
 
             pass
     pass
 
 
-share_path = '/home/yiyo/reflexData_mapMode_Highlands/reflex_end_products/2023-05-28T23:33:43/' \
-             'XSHOO.2018-03-10T08:00:28.424_tpl/'
-path_old_1D = share_path + 'MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE1D_VIS.fits'
-path_new_1D = share_path + 'MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE1D_VIS_UPDATE.fits'
-path_2D = share_path + 'MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE2D_VIS.fits'
+# share_path = '/home/yiyo/reflexData_mapMode_Highlands/reflex_end_products/'
+#
+# for direc in os.listdir(share_path):
+#     copy_and_update_fits(share_path + direc + '/', 'VIS', normalize=False, update=True)
+#     #print(direc)
 
-hdul_old = fits.open(path_old_1D)
-hdul_new = fits.open(path_new_1D)
-hdul_2D = fits.open(path_2D)
+'''
+share_path = '/home/yiyo/reflex_data_telluric/reflex_end_products/2023-07-10T18:14:10/'
 
-median_2D = np.median(hdul_2D[0].data, axis=0)
-std_2D = np.std(hdul_2D[0].data, axis=0)
+VIS1_tel_path = share_path + 'XSHOO.2018-03-10T10:02:53.034_tpl/Hip098197_TELL_SLIT_FLUX_MERGE1D_VIS.fits'
+VIS1_2D_tel_path = share_path + 'XSHOO.2018-03-10T10:02:53.034_tpl/Hip098197_TELL_SLIT_FLUX_MERGE2D_VIS.fits'
 
-fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-fig.suptitle('Antes del cambio', fontsize=24)
+VIS2_tel_path = share_path + 'XSHOO.2018-03-10T10:05:34.899_tpl/Hip098197_TELL_SLIT_FLUX_MERGE1D_VIS.fits'
+NIR1_tel_path = share_path + 'XSHOO.2018-03-10T10:02:56.137_tpl/Hip098197_TELL_SLIT_FLUX_MERGE1D_NIR.fits'
+NIR2_tel_path = share_path + 'XSHOO.2018-03-10T10:05:38.008_tpl/Hip098197_TELL_SLIT_FLUX_MERGE1D_NIR.fits'
 
-axs[0].plot(hdul_old[0].data[1000:], label='Old 1D')
-axs[0].plot(hdul_new[0].data[1000:], label='New 1D')
-axs[0].legend()
-axs[0].grid()
+VIS1D_path = '/home/yiyo/reflexData_mapMode_Highlands/reflex_end_products/2023-05-28T23:33:43/' \
+             'XSHOO.2018-03-10T08:00:28.424_tpl/MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE1D_VIS.fits'
+VIS2D_path = '/home/yiyo/reflexData_mapMode_Highlands/reflex_end_products/2023-05-28T23:33:43/' \
+             'XSHOO.2018-03-10T08:00:28.424_tpl/MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE2D_VIS.fits'
 
-axs[1].plot(median_2D[1000:], label='Median 2D')
-axs[1].plot(hdul_new[0].data[1000:], label='New 1D')
-axs[1].legend()
-axs[1].grid()
+VIS1_afterMolec_path = '/home/yiyo/reflex_data_after_molecfit/reflex_end_products/molecfit/' + \
+                       'XSHOOTER/2023-07-09T02:50:21/MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE1D_VIS/' + \
+                       'MOV_Luna_highlands_2_SCIENCE_TELLURIC_CORR.fits'
+VIS1_afterMolec_tel_path = '/home/yiyo/reflex_data_std_starCorr/reflex_end_products/molecfit/XSHOOTER/' \
+                           '2023-07-11T07:39:08/MOV_Luna_highlands_2_SCI_SLIT_FLUX_MERGE1D_VIS/' \
+                           'MOV_Luna_highlands_2_SCIENCE_TELLURIC_CORR.fits'
+VIS1_tel = fits.open(VIS1_tel_path)
+VIS2_tel = fits.open(VIS2_tel_path)
+VIS1_2D_tel = fits.open(VIS1_2D_tel_path)
+VIS1D = fits.open(VIS1D_path)
+VIS2D = fits.open(VIS2D_path)
+VIS1_afterMolec = fits.open(VIS1_afterMolec_path)
+VIS1_afterMolec_tel = fits.open(VIS1_afterMolec_tel_path)
 
+#VIS2 = fits.open(VIS2_path)
+#NIR1 = fits.open(NIR1_path)
+#NIR2 = fits.open(NIR2_path)
+#VIS1_afterMolec = fits.open(VIS1_afterMolec_path)
+
+plt.plot(VIS1_tel[0].data[700:], label='VIS telluric standard star observed at {}'.format(VIS1_tel[0].header['DATE-OBS']))
+plt.plot(VIS2_tel[0].data[700:], label='VIS telluric standard star observed at {}'.format(VIS2_tel[0].header['DATE-OBS']))
+#plt.plot(VIS1_tel[0].data[700:], label='VIS telluric standard star')
+# plt.plot(VIS1D[0].data[700:], label='VIS 1D merge spectrum of Moon')
+#plt.plot(np.median(VIS2D[0].data, axis=0)[700:], label='Median VIS 2D merge spectrum of Moon')
+#plt.plot(VIS1_afterMolec[0].data[700:], label='VIS 1D merge spectrum after molecfit (original result)')
+plt.ylabel('Flux')
+#plt.plot(VIS1_afterMolec_tel[0].data[700:], label='VIS 1D merge spectrum after molecfit with std telluric star')
+# plt.plot(np.median(VIS2[0].data, axis=0)[700:], label='VIS2')
+# plt.plot(NIR1[0].data[700:], label='1')
+# plt.plot(NIR2[0].data[700:], label='2')
+plt.legend(fontsize=7)
+plt.grid()
 plt.show()
-plt.clf()
+
+'''
 
 
-with fits.open(path_new_1D, mode='update') as fits_file:
-    fits_file[0].data = median_2D
-    fits_file[1].data = std_2D
-
-fig2, axs2 = plt.subplots(1, 2, figsize=(10, 5))
-fig2.suptitle('Después del cambio', fontsize=24)
-
-axs2[0].plot(hdul_old[0].data[1000:], label='Old 1D')
-axs2[0].plot(hdul_new[0].data[1000:], label='New 1D')
-axs2[0].legend()
-axs2[0].grid()
-
-axs2[1].plot(median_2D[1000:], label='Median 2D')
-axs2[1].plot(hdul_new[0].data[1000:], label='New 1D')
-axs2[1].legend()
-axs2[1].grid()
-
-plt.show()

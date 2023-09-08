@@ -1,8 +1,10 @@
-import os, shutil
+import os
 import matplotlib.pyplot as plt
+import matplotlib.dates as dates
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import numpy as np
-from pathlib import Path
 from astropy.io import fits
+import pandas as pd
 
 
 def plot_default(directory, plot=False, verbose=False):
@@ -48,6 +50,13 @@ def median_2DSLIT(directory, ARM, normalize=False, plot=False, axes=None):
                     f = os.path.join(directory + '/' + folder, file)
                     hdul = fits.open(f)
                     date_obs = hdul[0].header['DATE-OBS']
+                    ra, dec = hdul[0].header['RA'], hdul[0].header['DEC']
+                    ra_off = hdul[0].header['HIERARCH ESO SEQ CUMOFF RA']
+                    dec_off = hdul[0].header['HIERARCH ESO SEQ CUMOFF DEC']
+                    airm_initial = hdul[0].header['HIERARCH ESO TEL AIRM START']
+                    airm_final = hdul[0].header['HIERARCH ESO TEL AIRM END']
+                    # airm = (airm_initial + airm_final)/2
+                    airm = airm_final
                     flux2D = hdul[0].data.copy()
                     median_flux = np.median(flux2D, axis=0)
                     std_flux = np.std(flux2D, axis=0)
@@ -71,20 +80,17 @@ def median_2DSLIT(directory, ARM, normalize=False, plot=False, axes=None):
         flux_test = median_flux[idx_min:idx_max + 1]
         median_test_flux = np.median(flux_test)
         flux_norm = median_flux/median_test_flux
-        std_norm = std_flux/median_test_flux
         if plot:
             wv = bin_table['WAVE']
             w_min, w_max = wv[idx_min], wv[idx_max]
-            axes.plot(wv[idx_avoid:], flux_norm[idx_avoid:], lw=0.5, label=date_obs, color='b')
+            axes.plot(wv[idx_avoid:], np.log(flux_norm[idx_avoid:]), lw=0.5, label=date_obs, color='b')
             axes.axvspan(w_min, w_max, alpha=0.1, color='k')
-            #axes.fill_between(wv[idx_avoid:], flux_norm[idx_avoid:] - std_norm[idx_avoid:],
-                              #flux_norm[idx_avoid:] + std_norm[idx_avoid:], alpha=0.3, color='k')
             axes.set_xlabel('[' + quants_col['WAVE'].unit + ']', fontsize=11)
             axes.set_ylabel('Normalized flux', fontsize=11)
             axes.grid()
             axes.legend(fontsize=13)
         else:
-            return flux_norm, bin_table, obj_region, quants_col
+            return flux_norm, bin_table, obj_region, quants_col, airm, date_obs, ra, dec, ra_off, dec_off
 
     else:
         if plot:
@@ -95,7 +101,7 @@ def median_2DSLIT(directory, ARM, normalize=False, plot=False, axes=None):
             axes.grid()
             axes.legend(fontsize=13)
         else:
-            return median_flux, bin_table, obj_region, quants_col
+            return median_flux, bin_table, obj_region, quants_col, airm, date_obs, ra, dec, ra_off, dec_off
 
 
 def medianALL_per_Region(directory, ARM, axes, color='b', normalize=False, plot=True):
@@ -204,6 +210,85 @@ def residues(path_arr, plot=False, norm_with_res=False):
         return wave_per_band, res_per_band, std_per_band
 
 
+def tau_slope(path, arm, ax=None, plot=False, normalize=False, plot_lnF_am=False, c=None):
+    airmass = []
+    f0 = []
+    for f in os.listdir(path):
+        airmass.append(median_2DSLIT(path + f, arm, normalize=normalize, plot=False)[-2])
+        f0.append(median_2DSLIT(path + f, arm, normalize=normalize, plot=False)[0])
+        bin_table = median_2DSLIT(path + f, arm, normalize=normalize, plot=False)[1]
+    zone = path.partition('_')[-1].partition('/')[0].partition('_')[-1]
+    lamba = bin_table['WAVE']
+    if zone=='Highlands':
+        airmass = airmass[:-1]
+        f0 = f0[:-1]
+    if plot_lnF_am:
+        #plt.plot()
+        #print(f0[0])
+        print(len(np.transpose(f0)))
+        np.random.seed(1)
+        plt.plot(airmass, np.log(np.transpose(f0)[np.random.randint(0, len(np.transpose(f0))-1)]))#, c=c, label=zone)
+        for idx in range(9):
+            plt.plot(airmass, np.log(np.transpose(f0)[np.random.randint(0, len(np.transpose(f0))-1)]))#, c=c)
+        plt.ylabel('Ln(F)')
+        plt.xlabel('airmass')
+        plt.title('{}'.format(zone))
+        #plt.legend()
+        plt.grid()
+        return len(np.transpose(f0))
+    tau = np.asarray([(flux[-1]-flux[0])/(airmass[-1]-airmass[0]) for flux in np.log(np.transpose(f0))])
+    if plot:
+        ax.plot(lamba[700:], tau[700:], lw=0.3, label=zone)
+    else:
+        return tau
+
+
+def AM(path, arm, ax, zone, c='k', offset=0.05):  # todo esto lo voy a ordenar
+    AM_arr = np.asarray([median_2DSLIT(path + f + '/', arm, normalize=False, plot=False)[4] for f in os.listdir(path)])
+    ra_arr = np.asarray([median_2DSLIT(path + f + '/', arm, normalize=False, plot=False)[6] for f in os.listdir(path)])
+    dec_arr = np.asarray([median_2DSLIT(path + f + '/', arm, normalize=False, plot=False)[7] for f in os.listdir(path)])
+    ra_arr_off = np.asarray([median_2DSLIT(path + f + '/', arm, normalize=False, plot=False)[8] for f in
+                             os.listdir(path)])
+    dec_arr_off = np.asarray([median_2DSLIT(path + f + '/', arm, normalize=False, plot=False)[9] for f in
+                              os.listdir(path)])
+    exp_time = np.asarray([median_2DSLIT(path + f + '/', arm, normalize=False, plot=False)[5] for f in
+                           os.listdir(path)])
+    mask = exp_time == '2018-03-10T08:27:22.037'
+    exp_time = exp_time[~mask]
+    AM_arr = AM_arr[~mask]
+    ra_arr = ra_arr[~mask]
+    dec_arr = dec_arr[~mask]
+    ra_arr_off = ra_arr_off[~mask]
+    dec_arr_off = dec_arr_off[~mask]
+    exp_time = [date.partition('T')[-1] for date in exp_time]
+    exp_time = pd.to_datetime(exp_time)
+    #if arm=='VIS':
+        #ax.plot(exp_time, offset + np.asarray(AM_arr), 'o:', c=c)
+    #if arm == 'NIR':
+        #ax.plot(exp_time, 2*offset + np.asarray(AM_arr), 'o:', c=c)
+    #if arm == 'UVB':
+        #ax.plot(exp_time, AM_arr, 'o:', c=c)
+    #ax.plot(exp_time, dec_arr - dec_arr_off/3600, 'o:', c=c, label=zone)
+    #ax.plot(exp_time, ra_arr - ra_arr_off / 3600, 'o:', c=c, label=zone)
+    #ax.plot(exp_time, ra_arr_off / 3600, 'o:', c=c, label=zone)
+    #ax.plot(exp_time, dec_arr_off / 3600, 'o:', c=c, label=zone)
+    #tau_slope(p, arm, ax=axins, plot=True, normalize=normalize)
+    ax.plot(exp_time, AM_arr, 'o:', c=c, label=zone)
+
+
+    date_form = dates.DateFormatter("%H:%M:%S")
+    ax.xaxis.set_major_formatter(date_form)
+    ax.legend(loc='best', fontsize=15)
+    ax.set_xlabel('Observation time', fontsize=20)
+    ax.set_ylabel('Final air mass', fontsize=20)
+    ax.grid()
+
+    #axins.set_ylabel(r'$\tau_{\lambda}$', fontsize=12)
+    #axins.set_xlabel(r'$\lambda$ (nm)', fontsize=12)
+    #axins.grid()
+    #plt.show()
+    pass
+
 # demo data with default oca rules mode
 # path_demo = '/home/yiyo/reflex_data/reflex_end_products/2023-04-30T03:28:15/'
 
@@ -212,23 +297,32 @@ path_demo = '/home/yiyo/reflex_data/reflex_end_products/2023-04-30T04:26:13/'
 
 
 # MOON highlands, 1 single frame with 1 single sky reduced with the new mapping oca rule (-> 3 files)
-path_Highlands = '/home/yiyo/reflexData_mapMode_Highlands/reflex_end_products/'
-path_Maria = '/home/yiyo/reflexData_mapMode_Maria/reflex_end_products/'
-path_dark_side = '/home/yiyo/reflexData_mapMode_Darkside/reflex_end_products/'
+path_Highlands = '/home/yiyo/moon_xshoo_pre_molecfit/reflexData_mapMode_highlands/reflex_end_products/'
+path_Maria = '/home/yiyo/moon_xshoo_pre_molecfit/reflexData_mapMode_maria/reflex_end_products/'
+path_dark_side = '/home/yiyo/moon_xshoo_pre_molecfit/reflexData_mapMode_darkside/reflex_end_products/'
 
 
 path_arrays = [path_Highlands, path_Maria, path_dark_side]
 
-n_subdir = len(os.listdir(path_Highlands))
+#n_subdir = len(os.listdir(path_Highlands))
 
-fig, axs = plt.subplots(2, 2, figsize=(30, 15), layout="constrained")
-path_0 = path_dark_side
-arm_0 = 'NIR'
-for f, ax in zip(os.listdir(path_0), fig.axes):
-    median_2DSLIT(path_0 + f, arm_0, normalize=True, plot=True, axes=ax)
-    fig.suptitle(path_0.partition('_')[-1].partition('/')[0].partition('_')[-1] + ' {}'.format(arm_0), fontsize=15)
-plt.show()
+arm_arr = ['UVB', 'VIS', 'NIR']
+fig, ax = plt.subplots(figsize=(14, 8))
+#for brazo, c in zip(arm_arr, ['b', 'yellow', 'r']):
+for p, c, z in zip(path_arrays, ['b', 'orange', 'k'], ['Highlands', 'Mare', 'Darkside']):
+    AM(p, 'UVB', ax, z, c=c)
+#fig.suptitle('Offset wentral position of the Moon', fontsize=25)
 
+# plt.plot(airmass)
+#plt.gcf().autofmt_xdate()
+#date_form = dates.DateFormatter("%H:%M:%S")
+#ax.xaxis.set_major_formatter(date_form)
+#ax.legend(loc='best', fontsize=15)
+#ax.grid()
+# plt.ylabel(r'$\tau_{\lambda}$', fontsize=18)
+# plt.xlabel(r'$\lambda$ (nm)', fontsize=18)
+# plt.title('UVB arm', fontsize=24, y=1.02)
+#plt.show()
 
 '''
 # Plotea las mediana del espectro por zona (tres espectros promedios -> HL, Maria y Darkside)
