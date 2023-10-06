@@ -6,8 +6,11 @@ import astropy.units as u
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Rotation
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, Circle
 import numpy as np
 from astropy.io import fits
+from PIL import Image
+from moon_after_molecfit import *
 
 
 def from_skyPosition_2_planetPosition(
@@ -166,7 +169,7 @@ def from_skyPosition_2_planetPosition(
     return (longitude, latitude, origin_frame, x_coor, y_coor, z_coor)
 
 
-def point_of_view(coord_obs, rotation_values, equatorial_radius, oblatitude, n):
+def point_of_view(coord_obs: object, rotation_values: object, equatorial_radius: object, oblatitude: object, n: object) -> object:
     """
     Sky observation ---> Planet observation
     This function transform the (RA, DEC) coordinates of an observation
@@ -230,25 +233,28 @@ def point_of_view(coord_obs, rotation_values, equatorial_radius, oblatitude, n):
 def pos_ra_dec(path):
     pos_obs = []
     moon_center = []
+    date_obs = []
     for file in os.listdir(path):
         pathfile = os.path.join(path, file)
         hdul = fits.open(pathfile)
         if hdul[0].header['HIERARCH ESO DPR TYPE'] == 'SKY':  # we will include the sky files soon
             continue
-        #if hdul[0].header['DATE-OBS'] == '2018-03-10T08:27:22.037':#i == 18:
+        if hdul[0].header['DATE-OBS'] == '2018-03-10T08:27:22.037':#i == 18:
             #print('aquí esta el malo')
             #i += 1
-            #continue
+            continue
         ra_obs, dec_obs = hdul[0].header['RA'], hdul[0].header['DEC']
         ra_off, dec_off = hdul[0].header['HIERARCH ESO SEQ CUMOFF RA'], hdul[0].header['HIERARCH ESO SEQ CUMOFF DEC']
         pos_obs_i = [ra_obs, dec_obs]
         moon_center_i = [ra_obs - ra_off/3600, dec_obs - dec_off/3600]  # offset coordinates are in arcsec
         pos_obs.append(pos_obs_i)
         moon_center.append(moon_center_i)
+        date_obs.append(hdul[0].header['DATE-OBS'])
         #hdul.close()
     pos_obs = np.asarray(pos_obs)
     moon_center = np.asarray(moon_center)
-    return pos_obs, moon_center
+    date_obs = np.asarray(date_obs)
+    return pos_obs, moon_center, date_obs
 
 '''
 # from paranal
@@ -361,8 +367,8 @@ rotation_values_highlands = np.array([[2.859517, -4.979931, 358.9716],
                                       [2.791992, -4.946603, 358.9166],
                                       [2.788651, -4.945055, 358.9140],
                                       [2.785298, -4.943511, 358.9115],
-                                      [2.775173, -4.938901, 358.9038],
-                                      [2.771776, -4.937372, 358.9013]])  # el intruso
+                                      [2.775173, -4.938901, 358.9038]])
+                                      #[2.771776, -4.937372, 358.9013]])  # el intruso
 
 rotation_values_maria = np.array([[2.764950, -4.934325, 358.8962],
                                   [2.754629, -4.929783, 358.8886],
@@ -388,7 +394,7 @@ rotation_values_darkside = np.array([[2.612183, -4.874076, 358.7939],
                                      [2.481177, -4.832209, 358.7184]])
 
 path_uvb = '/home/yiyo/Downloads/ESO_MOON_DATA_XSHOOTER/UVB/SLT_OBJ/'
-obs_pos_moon, planet_pos_moon = pos_ra_dec(path_uvb)
+obs_pos_moon, planet_pos_moon, date_obs = pos_ra_dec(path_uvb)
 rotation_values_moon = np.concatenate((rotation_values_highlands, rotation_values_maria, rotation_values_darkside), 
                                       axis=0)
 
@@ -403,30 +409,34 @@ lat, long, coord, x_oblate, y_oblate, z_oblate = from_skyPosition_2_planetPositi
                                                                                    oblatitude)
 
 # Plot
-print(lat)
 
-fig = plt.figure(figsize=(20, 20))
-axes = fig.add_subplot(projection='3d')
-axes.set_aspect("auto")
-
-axes.set_xlabel('X')
-axes.set_ylabel('Y')
-axes.set_zlabel('Z')
-#ax.set_xlim(-0.003, 0.003)
-#ax.set_ylim(-0.003, 0.003)
-#ax.set_zlim(-0.003, 0.003)
-
-axes.scatter(coord[:, 0], coord[:, 1], coord[:, 2],
-             c="red", label="Obs. over planet surface")
-axes.plot_wireframe(x_oblate, y_oblate, z_oblate,
-                    color="darkgoldenrod", rstride=7, cstride=7, label="Oblato")
-
-plt.legend()
-plt.show()
+#fig = plt.figure(figsize=(20, 20))
+#axes = fig.add_subplot(projection='3d')
+#axes.set_aspect("auto")
+#
+#axes.set_xlabel('X')
+#axes.set_ylabel('Y')
+#axes.set_zlabel('Z')
+##ax.set_xlim(-0.003, 0.003)
+##ax.set_ylim(-0.003, 0.003)
+##ax.set_zlim(-0.003, 0.003)
+#
+#axes.scatter(coord[:, 0], coord[:, 1], coord[:, 2],
+#             c="red", label="Obs. over planet surface")
+#axes.plot_wireframe(x_oblate, y_oblate, z_oblate,
+#                    color="darkgoldenrod", rstride=7, cstride=7, label="Oblato")
+#
+#plt.legend()
+#plt.show()
 
 # %%
-f, ax = pa.figaxes(figsize=(6, 6))
-f.tight_layout()
+fig = plt.figure(layout='constrained', figsize=(15, 5))
+subfigs = fig.subfigures(1, 2, wspace=0.01, width_ratios=[1, 1])
+
+ax = subfigs[0].subplots(1, 1)
+# subfigs[0].suptitle('Left plots', fontsize='x-large')
+#f, ax = pa.figaxes(figsize=(6, 6))
+#fig.tight_layout()
 ax.set_aspect('equal')
 
 #time = apt.Time("2022-01-02T18:33:00", format='isot', scale='utc') # new Moon
@@ -434,6 +444,7 @@ ax.set_aspect('equal')
 #time = apt.Time("2022-08-12T01:00:00", format='isot', scale='utc')  #N2
 #time = apt.Time("2022-08-15T06:30:00", format='isot', scale='utc')  #N3
 time = apt.Time("2018-03-10T08:00:00", format='isot', scale='utc')
+#time = apt.Time("2024-03-04T06:00:00", format='isot', scale='utc')
 span_time_hours = 3.6
 time2 = time+10*u.min
 #site = apc.EarthLocation.of_site("lco")
@@ -456,6 +467,7 @@ def add_label(text, to_earth, azimuth, offset_label=-200, ha="left", va="center"
                 #arrowprops={'arrowstyle': '->'},
                 **kwargs)
 
+
 def add_label_xy(text, xyz, offset_label, **kwargs):
 
     ax.annotate(f"{text}{'$_{{bhd}}$' if xyz[2]<0 else ''}", xyz[[0, 1]], (xyz[0]+offset_label[0],
@@ -465,6 +477,7 @@ def add_label_xy(text, xyz, offset_label, **kwargs):
 
 def sub_earth_n_position_angle(body):
     elongation = moon.separation(body)
+    print(elongation)
     to_sub_earth_angle = (np.arctan2(body.distance * np.sin(elongation),
                                      moon_distance -
                                      body.distance * np.cos(elongation)))
@@ -474,7 +487,8 @@ def sub_earth_n_position_angle(body):
 
     return to_sub_earth_angle, position_angle
 
-def shadow(delta, azimuth, **kwargs):
+
+def shadow(axes, delta, azimuth, **kwargs):
 
     xy = []
     for angle in np.linspace(0, 360, 50)*u.deg:
@@ -482,11 +496,12 @@ def shadow(delta, azimuth, **kwargs):
         ncoo = R.from_euler("y", -delta.to(u.deg).value, degrees=True).apply(coo)
         nncoo = R.from_euler("x", -azimuth.to(u.deg).value, degrees=True).apply(ncoo)
         nncoo *= moon_radius.value
-        if nncoo[0] < 0:
+        if nncoo[0] > 0:
             xy.append(nncoo[[1, 2]])
 
-    ax.plot(*list(zip(*xy)), **kwargs)
+    axes.plot(*list(zip(*xy)), **kwargs)
     print(*xy)
+
 
 def xyz_from_sidereal(skycoord):
 
@@ -495,6 +510,7 @@ def xyz_from_sidereal(skycoord):
     nncoo = R.from_euler("y", -moon.dec.to(u.deg).value, degrees=True).apply(ncoo)
 
     return nncoo[[1, 2, 0]]*moon_radius.value
+
 
 def plot_parallactic_angle(time, span, delta, correction_deg=30):
     par = np.array([moon_radius.value*1.02, moon_radius.value*1.08])
@@ -506,12 +522,12 @@ def plot_parallactic_angle(time, span, delta, correction_deg=30):
     ha = times.sidereal_time("mean", longitude=site.lon) - mn.ra
     par_ang = np.arctan2(np.sin(ha)*np.cos(site.lat),
                          (np.cos(mn.dec)*np.sin(site.lat) - np.cos(site.lat)*np.sin(mn.dec)*np.cos(ha)))
-    #par_ang = np.arcsin(np.sin(ha)*np.cos(site.lon)/np.cos(altaz.alt))
-    #par_ang = np.arcsin(np.sin(altaz.az)*np.cos(site.lon)/np.cos(mn.dec))
+    # par_ang = np.arcsin(np.sin(ha)*np.cos(site.lon)/np.cos(altaz.alt))
+    # par_ang = np.arcsin(np.sin(altaz.az)*np.cos(site.lon)/np.cos(mn.dec))
 
     print(f"lon{90*u.deg-site.lon} dec{90*u.deg-mn.dec}")
-    for t,h,a,z,p in zip(times,ha,altaz.alt,altaz.az,par_ang.to(u.deg)):
-        print(t,h,a,z,p)
+    for t, h, a, z, p in zip(times, ha, altaz.alt, altaz.az, par_ang.to(u.deg)):
+        print(t, h, a, z, p)
     print(f"lon{90*u.deg-site.lon} dec{90*u.deg-mn.dec}")
 
     for ang, t in zip(par_ang+correction_deg*u.deg, times):
@@ -529,10 +545,9 @@ def plot_parallactic_angle(time, span, delta, correction_deg=30):
              "o", color="black", markersize=5)
 
 
-
-
 angles = np.linspace(0, 360, 50)*u.deg
 ax.plot(moon_radius*np.sin(angles), moon_radius*np.cos(angles))
+# ax.plot(1800*np.sin(angles), 1800*np.cos(angles))
 ax.arrow(0, 0, ((moon2.ra-moon.ra)*np.cos(moon.dec)).to(u.arcsec).value, (moon2.dec-moon.dec).to(u.arcsec).value,
          length_includes_head=True, width=20)
 ax.annotate("10min displacement", (0, -100))
@@ -542,33 +557,42 @@ post = ')' if to_sub_earth_angle > 90*u.deg else ''
 pre = '(' if to_sub_earth_angle > 90*u.deg else ''
 add_label(f"{pre}Sub-solar{post}",
           to_sub_earth_angle, position_angle, -moon_radius.value/9, color="red", ha='center')
-shadow(to_sub_earth_angle, position_angle, color="red")
+shadow(ax, to_sub_earth_angle, position_angle, color="red")
 
 #ax.annotate(f"R$_L$ {moon_radius.value:.1f}''",
-            #(0.98*moon_radius.value, 0.9*moon_radius.value),
-            #ha="right")
+#            (0.98*moon_radius.value, 0.9*moon_radius.value),
+#            ha="right")
 ax.annotate(f"{100-to_sub_earth_angle.to(u.deg).value*100/180:.1f}% illum",
             (-0.98*moon_radius.value, 0.9*moon_radius.value),
             )
-ax.annotate(f"$\\alpha$ {moon.ra.to(u.hourangle).value:.1f}$^h$",
-            (-0.95*moon_radius.value, -0.95*moon_radius.value),
+ax.annotate(f"$\\theta=${to_sub_earth_angle.to(u.deg).value:.1f} deg",
+            (0.55*moon_radius.value, 0.9*moon_radius.value), color='k',
             )
-ax.annotate(f"$\\delta$ {'+' if moon.dec.value > 0 else ''}"
-            f"{moon.dec.to(u.deg).value:.1f}$^\circ$",
-            (0.95*moon_radius.value, -0.95*moon_radius.value),
-            ha="right")
+
+#ax.annotate(f"$\\alpha$ {moon.ra.to(u.hourangle).value:.1f}$^h$",
+#            (-0.95*moon_radius.value, -0.95*moon_radius.value),
+#            )
+#ax.annotate(f"$\\delta$ {'+' if moon.dec.value > 0 else ''}"
+#            f"{moon.dec.to(u.deg).value:.1f}$^\circ$",
+#            (0.95*moon_radius.value, -0.95*moon_radius.value),
+#            ha="right")
 
 
 #add_label_xy(f"radiant", xyz_from_sidereal(apc.SkyCoord("3h +58d00")), (-moon_radius.value/5,
                                                                         #-moon_radius.value/5))
 
+path_image = '/home/yiyo/Downloads/lroc.png'
+img = Image.open(path_image)
+img.resize((300, 300))
+a = np.asarray(img)
+ax.imshow(a, extent=[-900, 900, -900, 900], alpha=0.72)
 
-ax.set_title(time, fontsize=18)
+# ax.set_title(time, fontsize=18)
 
-ax.annotate("N", (0, .95*moon_radius.value), ha="center", va="center")
-ax.annotate("E", (.95*moon_radius.value, 0), ha="center", va="center")
-ax.annotate("S", (0, -.95*moon_radius.value), ha="center", va="center")
-ax.annotate("W", (-.95*moon_radius.value, 0), ha="center", va="center")
+ax.annotate("N", (0, 0.95*moon_radius.value), ha="center", va="center")
+ax.annotate("E", (0.95*moon_radius.value, 0), ha="center", va="center")
+ax.annotate("S", (0, -0.95*moon_radius.value), ha="center", va="center")
+ax.annotate("W", (-0.95*moon_radius.value, 0), ha="center", va="center")
 
 
 view_pos_moon = point_of_view(coord, rotation_values_moon, equatorial_radius_moon, oblatitude, n=3)
@@ -581,21 +605,143 @@ x2 = equatorial_radius_moon * oblatitude * np.sin(theta) #/ 60 / 60
 #x2 = moon_radius.value * oblatitude * np.sin(theta) #/ 60 / 60
 
 #(fig2, axes2) = plt.subplots(1, 1, figsize=(15, 15))
-ax.plot(x1, x2, c='k', label='Saturno')
-ax.plot(view_pos_moon[:, 1]*3600, view_pos_moon[:, 2]*3600, "|", markersize=11, c="g")
+#ax.plot(x1, x2, c='k', label='Saturno')
+axs_loc = subfigs[1].subplots(3, 1)
+dates_posImb_newXshoo = ['08:03:37.261', '08:07:56.363', '08:11:57.865', '08:16:21.868', '08:20:35.121']
+dates_posNub_newXshoo = ['08:33:51.071', '08:40:12.425', '08:44:51.959', '08:50:21.659', '08:55:54.888']
+dates_posImb_extra = dates_posImb_newXshoo[1:4]
+dates_posNub_extra = dates_posNub_newXshoo[1:4]
+x_tych_init, y_tych_init = 150, 558
+for x, y, date in zip(view_pos_moon[:, 1]*3600, view_pos_moon[:, 2]*3600, date_obs):
+    if x > 0 and y > 0:
+        c = 'aqua'
+        idx_ax = 1
+    if x > 0 and y < 0:
+        c = 'y'
+        idx_ax = 0
+    if x < 0:
+        c = 'k'
+        idx_ax = 2
+    if date.partition('T')[-1] == '08:00:23.243':
+        rect_imb = Rectangle((x, y - 20), width=15*17, height=40, facecolor=c, alpha=0.7, label='Mare Imbrium')
+        ax.add_patch(rect_imb)
+    if date.partition('T')[-1] == '08:29:35.498':
+        rect_nub = Rectangle((x, y - 20), width=15*15, height=40, facecolor=c, alpha=0.7, label='Mare Nubium')
+        ax.add_patch(rect_nub)
+    if date.partition('T')[-1] == '09:11:16.900':
+        rect_fec = Rectangle((x, y - 20), width=40, height=40, facecolor=c, alpha=0.7, label='Mare Fecundidatis')
+        ax.add_patch(rect_fec)
+        # tycho crater
+        rect_tych = Rectangle((x_tych_init, y_tych_init - 18), width=4*45, height=40, facecolor='m', alpha=0.7,
+                              label='Tycho crater')
+        ax.add_patch(rect_tych)
+    # we are not going to plot the nightime of the Moon (just one single position)
+    if idx_ax == 2:
+        continue
+    rect = Rectangle((x - 0.2, y - 5.5), width=0.4, height=11, facecolor='lime', alpha=1)
+    # circle = Circle((x, y), radius=2, edgecolor=c, fill=False, linewidth=1)
+    axs_loc[idx_ax].add_patch(rect)
+    # axs_loc[idx_ax].add_patch(circle)
+    is_in = np.logical_or(date.partition('T')[-1] in dates_posImb_newXshoo,
+                          date.partition('T')[-1] in dates_posNub_newXshoo)
+    if is_in:
+        is_in_in = np.logical_or(date.partition('T')[-1] in dates_posImb_extra,
+                                 date.partition('T')[-1] in dates_posNub_extra)
+        slit_newXshoo = Rectangle((x - 0.2, y - 5.5), width=0.4, height=11, facecolor='orange', alpha=1)
+        axs_loc[idx_ax].add_patch(slit_newXshoo)
+        if is_in_in:
+            aperture_extra = circle = Circle((x, y), radius=2, edgecolor='blue', fill=False, alpha=1)
+            axs_loc[idx_ax].add_patch(aperture_extra)
+
+# ax.set_xlim(-1800, 1800)
+# ax.set_ylim(-1800, 1800)
+off_tych = [45*x for x in np.arange(0, 5)]
+for off in off_tych:
+    slit_tychXshoo = Rectangle((x_tych_init + off, y_tych_init), width=0.4, height=11, facecolor='orange', alpha=1)
+    axs_loc[2].add_patch(slit_tychXshoo)
+    if off in off_tych[::2]:#off_tych[1:4]:
+        ap_tych_extra = circle = Circle((x_tych_init + off + 0.2, y_tych_init + 5.5), radius=2, edgecolor='blue',
+                                        fill=False, alpha=1)
+        axs_loc[2].add_patch(ap_tych_extra)
+
+
 ax.set_xlabel('Relative arcsec', fontsize=14)
 ax.set_ylabel('Relative arcsec', fontsize=14)
-ax.invert_yaxis()
-#ax.legend(loc='best')
-#plt.legend()
-#plt.show()
+ax.legend(fontsize=7, loc='lower left')
 
+axs_loc[0].imshow(a, extent=[-900, 900, -900, 900], alpha=0.72)
+axs_loc[1].imshow(a, extent=[-900, 900, -900, 900], alpha=0.72)
+axs_loc[2].imshow(a, extent=[-900, 900, -900, 900], alpha=0.72)
+shadow(axs_loc[1], to_sub_earth_angle, position_angle, color="red")
+shadow(axs_loc[2], to_sub_earth_angle, position_angle, color="red")
 
+axs_loc[0].set_xlim(260, 540)
+axs_loc[1].set_xlim(110, 340)
+axs_loc[2].set_xlim(130, 340)   # tycho crater
+axs_loc[0].set_ylim(-615, -585)
+axs_loc[1].set_ylim(335, 365)
+axs_loc[2].set_ylim(545, 580)   # tycho crater
+axs_loc[1].set_ylabel('Relative arcsec', fontsize=14)
+axs_loc[2].set_xlabel('Relative arcsec', fontsize=14)
+axs_loc[0].set_title('Mare Imbrium', fontsize=16)
+axs_loc[1].set_title('Mare Nubium', fontsize=16)
+# axs_loc[2].set_title('Mare Fecundidatis', fontsize=16)
+axs_loc[2].set_title('Tycho crater', fontsize=16)
 
-#plot_parallactic_angle(time, span_time_hours, 5*u.min)
+# plot_parallactic_angle(time, span_time_hours, 5*u.min)
+"""
+for H in np.arange(-6, 7)*15:
+    angles = np.linspace(0, 360, 100)*u.deg
+    yz = []
+    for lat in angles:
+        coo = np.array([0, 1, 0])
+        ncoo = R.from_euler("x", -lat.to(u.deg).value, degrees=True).apply(coo)
+        nncoo = R.from_euler("z", -(90 - to_sub_earth_angle.to(u.deg).value + H), degrees=True).apply(ncoo)
+        nncoo *= moon_radius.value
+        if nncoo[0] > 0:
+            yz.append(nncoo[[1, 2]])
+            ax.plot(*list(zip(*yz)), 'o', markersize=0.2, c='k')
 
+        coo_label = np.array([0, 1, 0])
+        ncoo_label = R.from_euler("x", 10, degrees=True).apply(coo_label)
+        nncoo_label = R.from_euler("z", -(90 - to_sub_earth_angle.to(u.deg).value + H), degrees=True).apply(ncoo_label)
+        nncoo_label *= moon_radius.value
+        if nncoo_label[0] > 0:
+            ax.annotate(f"{H/15}", (nncoo_label[1], nncoo_label[2]),)
+"""
 
-# %%
+#axs_snr = subfigs[1].subplots(3, 1)
+#for c, region in zip(['y', 'aqua', 'k'], ['highlands', 'maria', 'darkside']):
+#    for axs, arm, rms_mask, lamba_eff in zip(axs_snr, ['UVB', 'VIS', 'NIR'], lamba_rms_mask, lamba_eff_nd):
+#        if region == 'highlands' and arm == 'NIR':
+#            continue
+#        idx_arr = np.arange(0, 14) if arm == 'NIR' and region == 'maria' else None
+#        s_to_n, wv_eff = rms(region, arm, 4, 1, rms_mask, lamba_eff, mask_all, idx_arr=idx_arr)
+#        if arm == 'UVB':
+#            if region == 'maria':
+#                lbl = 'Mare Nubium'
+#            if region == 'highlands':
+#                lbl = 'Mare Imbrium'
+#            if region == 'darkside':
+#                lbl = 'Mare Fecundidatis'
+#            axs.plot(lamba_eff, s_to_n, '+', label=lbl, markersize=7, c=c)
+#        else:
+#            axs.plot(lamba_eff, s_to_n, '+', markersize=7, c=c)
+#
+#        if arm == 'UVB' and region == 'darkside':
+#            axs.set_yscale('log')
+#            axs.grid()
+#        if arm == 'NIR' and region == 'darkside':
+#            axs.set_xlabel(r'$\lambda$ (nm)', fontsize=13)
+#            axs.set_yscale('log')
+#            axs.grid()
+#        if arm == 'VIS' and region == 'darkside':
+#            y_l = r'$S/N$'
+#            axs.set_ylabel(y_l, fontsize=13)
+#            axs.set_yscale('log')
+#            axs.grid()
+#        if arm == 'UVB' and region == 'darkside':
+#            axs.legend(loc='upper left')
 
-
+plt.show()
 
