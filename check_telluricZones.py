@@ -37,8 +37,8 @@ def plot_spectra_partition(figure, loc, xshoo_arm, select_rv_arm, best_solar_arm
                                 np.ma.masked_array(wv_raw, mask=np.repeat(False, len(wv_raw))),
                                 n_poly, 1, plot_cont=False)
         wv_rawNorm = np.ma.masked_array(wv_raw, mask=f_rawNorm.mask)
-    figure.suptitle(f"$\\sigma = {np.ma.std(f_rawNorm):.3f}$, " + r'FWHM$=2\sqrt{2log(2)}\sigma$, ' +
-                    r'$R\sim\lambda/d\lambda$')
+    #figure.suptitle(f"$\\sigma = {np.ma.std(f_rawNorm):.3f}$, " + r'FWHM$=2\sqrt{2log(2)}\sigma$, ' +
+    #                r'$R\sim\lambda/d\lambda$')
 
     #################################### After molecfit ############################
     if notUVB:
@@ -111,11 +111,20 @@ def plot_spectra_partition(figure, loc, xshoo_arm, select_rv_arm, best_solar_arm
             wv_stwinNorm_to_plot = np.ma.masked_array(wv_alb_stwin.data, mask=m_stwinNorm_now)
             f_stwinNorm_to_plot = np.ma.masked_array(f_interp_stwin_norm.data, mask=m_stwinNorm_now)
         if not np.all(wv_rawNorm_to_plot.mask):
-            axes.plot(wv_rawNorm_to_plot, f_rawNorm_to_plot, c="k", alpha=0.8,
-                      label=r'$\sigma_{\lambda}$' +
-                            f"$={np.ma.std(f_molNorm_to_plot) if notUVB else np.ma.std(f_rawNorm_to_plot):.3f}$" if
-                      not notUVB else None)
-            axes.plot(wv_sunNorm_to_plot, f_sunNorm_to_plot + .2, c='g')
+            if idx_lims == 2:
+                # axes.plot(wv_rawNorm_to_plot, f_rawNorm_to_plot, c="k", alpha=0.8,
+                #           label=r'$\sigma_{\lambda}$' +
+                #                 f"$={np.ma.std(f_molNorm_to_plot) if notUVB else np.ma.std(f_rawNorm_to_plot):.3f}$" if
+                #                 not notUVB else None)
+                axes.plot(wv_rawNorm_to_plot, f_rawNorm_to_plot, c="k", alpha=0.8,
+                          label="Moon spectra normalized pre-telluric correction")
+            else:
+                axes.plot(wv_rawNorm_to_plot, f_rawNorm_to_plot, c="k", alpha=0.8)
+            if idx_lims == 2:
+                axes.plot(wv_sunNorm_to_plot, f_sunNorm_to_plot + .2, c='g',
+                          label="Solar spectra normalized")
+            else:
+                axes.plot(wv_sunNorm_to_plot, f_sunNorm_to_plot + .2, c='g')
             if lamba_stwin is not None and J_stwin is not None:
                 axes.plot(wv_stwinNorm_to_plot, f_stwinNorm_to_plot, c='y')
         axes.set_ylim(f_rawNorm_min, f_rawNorm_max)
@@ -140,8 +149,13 @@ def plot_spectra_partition(figure, loc, xshoo_arm, select_rv_arm, best_solar_arm
             if not np.all(wv_tellNorm_to_plot.mask):
                 axes.plot(wv_tellNorm_to_plot, f_tellNorm_to_plot, c='grey', alpha=0.5)
             if not np.all(wv_molNorm_to_plot.mask):
-                axes.plot(wv_molNorm_to_plot, f_molNorm_to_plot - .2, label=r'$\sigma_{\lambda}$' +
-                          f"$={np.ma.std(f_molNorm_to_plot) if notUVB else np.ma.std(f_rawNorm_to_plot):.3f}$")
+                if idx_lims == 2:
+                    #axes.plot(wv_molNorm_to_plot, f_molNorm_to_plot - .2, label=r'$\sigma_{\lambda}$' +
+                              #f"$={np.ma.std(f_molNorm_to_plot) if notUVB else np.ma.std(f_rawNorm_to_plot):.3f}$")
+                    axes.plot(wv_molNorm_to_plot, f_molNorm_to_plot - .2,
+                              label="Moon spectra normalized post-telluric correction")
+                else:
+                    axes.plot(wv_molNorm_to_plot, f_molNorm_to_plot - .2)
         # albedo --> solar spectra
         m_zoom_albNorm = np.logical_and(wv_alb.data > x_lims[0], wv_alb.data < x_lims[1])
         m_albNorm_now = np.logical_or(wv_alb.mask, ~m_zoom_albNorm)
@@ -157,11 +171,19 @@ def plot_spectra_partition(figure, loc, xshoo_arm, select_rv_arm, best_solar_arm
         if not np.all(wv_alb_to_plot.mask):
             #axes1.plot(wv_alb_to_plot, albNorm_to_plot, color='cyan')
             # axes.plot(wv_alb_to_plot, albNorm_to_plot, color='cyan')
-            axes.plot(wv_alb_to_plot, albNorm_to_plot, color='r')
+            if idx_lims == 2:
+                axes.plot(wv_alb_to_plot, albNorm_to_plot, color='r', label="Normalized reflectance")
+            else:
+                axes.plot(wv_alb_to_plot, albNorm_to_plot, color='r')
             if lamba_stwin is not None and J_stwin is not None:
                 axes1.plot(wv_alb_to_plot_stwin, albNorm_stwin_to_plot - 0.04, color='m')
         axes1.set_ylim(albNorm_min, albNorm_max)
         axes1.yaxis.set_major_formatter(plt.NullFormatter())
+
+        if idx_lims == 2:
+            axes.legend()
+        if idx_lims == 4:
+            axes.set_xlabel(r'$\lambda$ (nm)')
         # shadowed areas
         #for rv_area in select_rv_arm:
         #    axes.fill_between(wv_rawNorm_to_plot, np.ma.median(alb_norm_arr) - 2*np.ma.std(alb_norm_arr), -2,

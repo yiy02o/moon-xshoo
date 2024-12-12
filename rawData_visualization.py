@@ -51,17 +51,27 @@ def imshow_plot(path_source, axes, loc, together=False, fontsize=10):
         ax.set_yticks([])
     pass
 
-'''
-path = '/home/yiyo/Downloads/ESO_MOON_DATA_XSHOOTER/NIR/SLT_OBJ/'
 
-plt.clf()
-fig, axes = plt.subplots(6, 3, figsize=(15, 12), sharex='row')
-plt.rcParams['figure.constrained_layout.use'] = True
+path = '/home/yiyo/Downloads/ESO_MOON_DATA_XSHOOTER/VIS/SLT_OBJ/'
 
-
-imshow_plot(path, fig, 'highlands', together=False)
-
-fig.suptitle('NIR Highlands raw data', fontsize=30);
-plt.show()'''
+#plt.clf()
+#fig, axes = plt.subplots(1, 1, figsize=(20, 10), sharex='row')
+#plt.rcParams['figure.constrained_layout.use'] = True
 
 
+#imshow_plot(path, fig, 'maria', together=False)
+
+#fig.suptitle('VIS Mare raw data', fontsize=30);
+#plt.show()
+
+
+path_true = '/home/yiyo/moon_vis_test/reflex_tmp_products/xshooter/' \
+            'xsh_respon_slit_nod_1/2024-04-25T03:48:49.140/FLUX_SLIT_FLUX_MERGE1D_VIS.fits'
+path_false = '/home/yiyo/moon_xshoo_pre_molecfit/reflexData_mapMode_highlands/reflex_tmp_products/xshooter/' \
+             'xsh_respon_slit_nod_1/2023-05-29T00:21:32.567/FLUX_SLIT_FLUX_MERGE1D_VIS.fits'
+
+hdul_true = fits.open(path_true)
+hdul_false = fits.open(path_false)
+plt.plot(hdul_true[0].data[1_000:])
+plt.plot(hdul_false[0].data[1_000:])
+plt.show()

@@ -1,4 +1,5 @@
 import os
+import time
 import matplotlib.pyplot as plt
 import matplotlib.dates as dates
 from matplotlib import patheffects
@@ -8,6 +9,7 @@ import scipy
 import pandas as pd
 from astropy.stats import sigma_clip
 from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import pairwise_distances_argmin
 
 
 def compute_flux(path, dim):
@@ -19,7 +21,7 @@ def compute_flux(path, dim):
     flux = hdul[0].data.copy() if dim == '1D' else np.median(hdul[0].data.copy(), axis=0)
     err_flux = hdul[1].data.copy() if dim == '1D' else np.std(hdul[0].data.copy(), axis=0)
     hdul.close()
-    return flux[1_000:], err_flux[1_000:], airm, date_obs   # to avoid saturation
+    return flux, err_flux, airm, date_obs   # to avoid saturation
 
 
 def idp_subtract(path):
@@ -30,86 +32,10 @@ def idp_subtract(path):
     return bin_table, obj_region, quants_col
 
 
-def stdTell(obj_name, arm, dim='1D', counts=False, plot=False, ax=None, first=True):
-    if arm == 'UVB':
-        src = '/home/yiyo/moon_xshoo_pre_molecfit/'
-        for dir in os.listdir(src):
-            if obj_name in dir:
-                src_complement = src + dir + '/reflex_end_products/'
-                if len(os.listdir(src_complement)) > 1:
-                    print('There are more than 1 std tell run over xshooter esoreflex {} arm'.format(arm))
-                else:
-                    run_time = 'first' if first else 'second'
-                    new_src_complement = src_complement + os.listdir(src_complement)[0] + '/' + run_time + '/'
-                    for arm_dir in os.listdir(new_src_complement):
-                        if all(arm in word for word in os.listdir(new_src_complement + arm_dir + '/')):
-                            for file in os.listdir(new_src_complement + arm_dir + '/'):
-                                keyname = 'SLIT_MERGE' if counts else 'SLIT_FLUX_MERGE'
-                                if keyname + dim in file:
-                                    path_file = os.path.join(new_src_complement + arm_dir + '/', file)
-                                    flux, err_flux, airm, date_obs = compute_flux(path_file, dim)
-    else:
-        src = '/home/yiyo/moon_xshoo_after_molecfit/'
-        for dir in os.listdir(src):
-            if obj_name in dir:
-                src_complement = src + dir + '/reflex_end_products/molecfit/XSHOOTER/'
-                if len(os.listdir(src_complement)) > 1:
-                    print('There are more than 1 std tell run over xshooter esoreflex {} arm'.format(arm))
-                else:
-                    new_src_complement = src_complement + os.listdir(src_complement)[0] + '/'
-                    for arm_dir in os.listdir(new_src_complement):
-                        keyname = 'SLIT_MERGE' if counts else 'SLIT_FLUX_MERGE'
-                        if keyname in arm_dir and arm in arm_dir:
-                            filename = os.listdir(new_src_complement + arm_dir + '/')[0]
-                            path_file = os.path.join(new_src_complement + arm_dir + '/', filename)
-                            flux, err_flux, airm, date_obs = compute_flux(path_file, '1D')
-
-    src = '/home/yiyo/moon_xshoo_pre_molecfit/'
-    for dir in os.listdir(src):
-        if obj_name in dir:
-            src_complement = src + dir + '/reflex_end_products/'
-            if len(os.listdir(src_complement)) > 1:
-                print('There are more than 1 std tell run over xshooter esoreflex {} arm'.format(arm))
-            else:
-                run_time = 'first' if first else 'second'
-                new_src_complement = src_complement + os.listdir(src_complement)[0] + '/' + run_time + '/'
-                for arm_dir in os.listdir(new_src_complement):
-                    if all(arm in word for word in os.listdir(new_src_complement + arm_dir + '/')):
-                        for file in os.listdir(new_src_complement + arm_dir + '/'):
-                            if 'IDP' in file:
-                                # the info of our data
-                                path_file = os.path.join(new_src_complement + arm_dir + '/', file)
-                                hdul = fits.open(path_file)
-                                bin_table = hdul[1].data[0]
-                                obj_region = hdul[0].header['HIERARCH ESO OBS NAME']
-                                quants_col = hdul[1].columns
-                            else:
-                                pass
-    if plot:
-        wave_length = bin_table['WAVE']
-        if arm == 'UVB':
-            c = 'b'
-        if arm == 'VIS':
-            c = 'yellow'
-        if arm == 'NIR':
-            c = 'r'
-            if counts:
-                y_label = quants_col['FLUX REDUCED'].unit
-            else:
-                y_label = 'erg ' + r'$cm^{-2} s^{-1} \AA^{-1}$'
-            ax.set_ylabel(y_label, fontsize=12)
-            ax.set_title(obj_name + ' ' + date_obs, fontsize=16)
-        ax.plot(wave_length[1000:], flux[1000:], c=c, label=arm, lw=0.5)
-        ax.set_xscale('log')
-    else:
-        return flux, err_flux, airm, date_obs, bin_table, obj_region, quants_col
-
-
-def norm_slope(y, x, n):
-    z = np.ma.polyfit(x, y, n)
+def norm_slope(y, x, n_poly):
+    z = np.ma.polyfit(x, y, n_poly)
     p = np.poly1d(z)
     y_poly = p(x.data)
-    y_norm = y / y_poly
     return y_poly
 
 
@@ -119,8 +45,9 @@ def mask_tellSpikes(lamba, X_n):
     return mask_reduced
 
 
-def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr=None, wv_lims=None,
-         arm_together=False, mask_tell_nd=None, norm=False, n_poly=4, mol_earth_atm=False):
+def moon(obj_name, xshoo_arm, dim='1D', counts=False, plot=False, figure=None, idx_nd=None, wv_lims=None,
+         skip_frame=None, arm_together=False, mask_tell_nd=None, norm=False, n_poly=4, mol_earth_atm=False,
+         mode="post_molecfit"):
     """The UVB data products (no molecfit correction) are saved in the directory
     /home/yiyo/moon_xshoo_pre_molecfit/. Conversely, VIS and NIR arm must be corrected with molecfit
     and are located in the directory /home/yiyo/moon_xshoo_after_molecfit. Most of the conditionals
@@ -136,16 +63,21 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
     detail (in nm units). the arm_together parameter is just if you want to plot al arm parts of the spectra
     with a single colour (in this case is in black)."""
 
-    if arm == 'UVB' or counts:
+    if mode == "pre_molecfit" or counts:
         src = '/home/yiyo/moon_xshoo_pre_molecfit/'
         for directory in os.listdir(src):
             if obj_name in directory:
                 src_complement = src + directory + '/reflex_end_products/'
                 list_obs_files = os.listdir(src_complement)
-                if idx_arr is None:
+                if idx_nd is None:
                     idx_files = list_obs_files
                 else:
-                    idx_files = [list_obs_files[idx] for idx in idx_arr]
+                    idx_files = []
+                    for idx in idx_nd:
+                        if idx != skip_frame:
+                            idx_files.append(list_obs_files[idx])
+                        else:
+                            continue
                 flux_arr_per_obs = []
                 err_flux_arr_per_obs = []
                 airm_arr_per_obs = []
@@ -157,7 +89,7 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
                         # searching in the arm subdirectories
                         if subsubdir == 'README':
                             continue
-                        if all(arm in word for word in os.listdir(src_complement + subdir + '/' + subsubdir + '/')):
+                        if all(xshoo_arm in word for word in os.listdir(src_complement+subdir+'/'+subsubdir+'/')):
                             for file in os.listdir(src_complement + subdir + '/' + subsubdir + '/'):
                                 keyname = 'SLIT_MERGE' if counts else 'SLIT_FLUX_MERGE'
                                 if keyname + dim in file:
@@ -182,13 +114,18 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
                     if dim in dim_directory:
                         new_src_complement = src_complement + dim + '/'
                         for arm_dir in os.listdir(new_src_complement):
-                            if arm in arm_dir:
+                            if xshoo_arm in arm_dir:
                                 pre_file_src = new_src_complement + arm_dir + '/reflex_end_products/molecfit/XSHOOTER/'
                                 list_obs_files = os.listdir(pre_file_src)
-                                if idx_arr is None:
+                                if idx_nd is None:
                                     idx_files = list_obs_files
                                 else:
-                                    idx_files = [list_obs_files[idx] for idx in idx_arr]
+                                    idx_files = []
+                                    for idx in idx_nd:
+                                        if idx != skip_frame:
+                                            idx_files.append(list_obs_files[idx])
+                                        else:
+                                            continue
                                 flux_arr_per_obs = []
                                 err_flux_arr_per_obs = []
                                 airm_arr_per_obs = []
@@ -227,20 +164,27 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
             print(directory)
             src_complement = xshoo_pre_molec + directory + '/reflex_end_products/'
             list_obs_files = os.listdir(src_complement)
-            if idx_arr is None:
+            if idx_nd is None:
                 idx_files = list_obs_files
             else:
-                idx_files = [list_obs_files[idx] for idx in idx_arr]
+                idx_files = []
+                for idx in idx_nd:
+                    if idx != skip_frame:
+                        idx_files.append(list_obs_files[idx])
+                    else:
+                        continue
+                # idx_files = [list_obs_files[idx] for idx in idx_arr]
+
             bin_table_arr_per_obs = []
             obj_region_arr_per_obs = []
             quants_col_arr_per_obs = []
-            for subdir in idx_files :
+            for subdir in idx_files:
                 # each subdir represents one single observation
                 for subsubdir in os.listdir(src_complement + subdir + '/'):
                     # searching in the arm subdirectories
                     if subsubdir == 'README':
                         continue
-                    if all(arm in word for word in os.listdir(src_complement + subdir + '/' + subsubdir + '/')):
+                    if all(xshoo_arm in word for word in os.listdir(src_complement + subdir + '/' + subsubdir + '/')):
                         for file in os.listdir(src_complement + subdir + '/' + subsubdir + '/'):
                             keyname = 'IDP'
                             if keyname in file:
@@ -255,7 +199,22 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
                         pass
         else:
             pass
-    wave_length = [b['WAVE'][1_000:] for b in bin_table_arr_per_obs]  # In the same arm the wv range would be the same
+    # avoid the saturation
+    mask_flux = []
+    for b in bin_table_arr_per_obs:
+        if not xshoo_arm == 'UVB' and not xshoo_arm == 'VIS' and not xshoo_arm == 'NIR':
+            raise ValueError("Can you repeat the arm?")
+        else:
+            if xshoo_arm == 'UVB':
+                m_f = np.ma.where(np.logical_and(b['WAVE'] > 374, b['WAVE'] < 3_000))  # 320 initially
+            if xshoo_arm == 'VIS':
+                m_f = np.ma.where(np.logical_and(b['WAVE'] > 554, b['WAVE'] < 3_000))  # 550 initially
+            if xshoo_arm == 'NIR':
+                m_f = np.ma.where(np.logical_and(b['WAVE'] > 1050, b['WAVE'] < 3_000))
+            mask_flux.append(m_f)
+    wave_length = [b['WAVE'][m_f] for b, m_f in zip(bin_table_arr_per_obs, mask_flux)]
+    flux_arr_per_obs = [f[m_f] for f, m_f in zip(flux_arr_per_obs, mask_flux)]
+    err_flux_arr_per_obs = [err[m_f] for err, m_f in zip(err_flux_arr_per_obs, mask_flux)]
 
     # if we want to normalize
     poly_to_norm = [norm_slope(f, wv, n_poly) for (f, wv) in zip(flux_arr_per_obs, wave_length)]
@@ -278,22 +237,22 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
 
     # if we want to plot
     if plot:
-        if arm == 'UVB':
+        if xshoo_arm == 'UVB':
             c = 'b'
-        if arm == 'VIS':
+        if xshoo_arm == 'VIS':
             c = 'yellow'
-        if arm == 'NIR':
+        if xshoo_arm == 'NIR':
             c = 'r'
         if arm_together:
             c = 'k'
         for f, wv, q, date, ax, p in zip(flux_arr_per_obs, wave_length, quants_col_arr_per_obs, date_arr_per_obs,
                                          figure.axes, poly_to_norm):
             if counts:
-                y_label = q['FLUX_REDUCED'].unit
+                y_la = q['FLUX_REDUCED'].unit
             else:
                 pass
-                y_label = 'erg ' + r'$cm^{-2} s^{-1} \AA^{-1}$'
-            ax.set_ylabel(y_label, fontsize=10)
+                y_la = 'erg ' + r'$cm^{-2} s^{-1} \AA^{-1}$'
+            ax.set_ylabel(y_la, fontsize=10)
             ax.set_xlabel(r'$\lambda$ (nm)', fontsize=10)
             ax.tick_params(labelsize=10)
             #if wv_lims is not None:
@@ -313,194 +272,181 @@ def moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr
             wave_length
 
 
-def lambda_ranges(obj_name, arm, n, s, plots_fit_cont, **kwargs):
-    f, sigma, airm, date, q_col, lamba = moon(obj_name, arm, norm=True, n_poly=n, **kwargs)
+def lambda_ranges(obj_name, xshoo_arm, n_poly, s, plots_fit_cont, **kwargs):
+    f, sigma, airm, date, q_col, lamba = moon(obj_name, xshoo_arm, norm=True, n_poly=n_poly, dim='1D',
+                                              mask_tell_nd=mask_all,
+                                              mode="pre_molecfit" if xshoo_arm == "UVB" else "post_molecfit")#**kwargs)
     f_clip = [sigma_clip(flux, sigma=s, stdfunc=scipy.stats.iqr) for flux in f]
     m_clip = [f_c.mask for f_c in f_clip]
     # lamba = [np.ma.masked_array(l.data, mask=m) for (l, m) in zip(lamba, m_clip)]
     m_clip = np.all(m_clip, axis=0)
-    lamba = [np.ma.masked_array(l.data, mask=m_clip) for l in lamba]
-
-    if plots_fit_cont:
-        plt.clf()
-        fig, ax = plt.subplots(figsize=(25, 5))
-        for f_c, wv in zip(f_clip, lamba):
-            ax.plot(wv, f_c, label=date, lw=0.5)
-        ax.set_yscale('log')
-        ax.set_xscale('log')
-        ax.set_ylabel('Normalized flux', fontsize=14)
-        ax.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
-        plt.show()
+    lamba = [np.ma.masked_array(la.data, mask=m_clip) for la in lamba]
     return lamba
 
 
-def fit_the_cont(obj_name, arm, n, s, n_sigma, plots_fit_cont=True, median_region=False, **kwargs):
+def lambda_ranges_v2(Ek, lamba, n_poly, s, plots_fit_cont=False):
+    poly_k = norm_slope(Ek, lamba, n_poly)
+    Ek_norm = Ek/poly_k
+    Ek_clip = sigma_clip(Ek_norm, sigma=s, stdfunc=scipy.stats.iqr)
+    m_clip = Ek_clip.mask
+    lamba = np.ma.masked_array(lamba.data, mask=m_clip)
+
+    if plots_fit_cont:
+        fig_cont, ax_cont = plt.subplots()
+        fig_cont.suptitle("Median region clip para fitear continuo")
+        ax_cont.plot(lamba, Ek_clip, lw=0.5)
+        ax_cont.set_yscale('log')
+        ax_cont.set_xscale('log')
+        ax_cont.set_ylabel('Normalized flux', fontsize=14)
+        ax_cont.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
+        fig_cont.show()
+    return lamba
+
+
+def fit_the_cont(obj_name, xshoo_arm, n_poly, s, n_sigma, plots_fit_cont=True, median_region=False, kmeans=None, k=None,
+                 **kwargs):
     if obj_name == 'maria':
         moon_loc = 'Nubium'
     if obj_name == 'highlands':
         moon_loc = 'Imbrium'
     if obj_name == 'darkside':
         moon_loc = 'Fecundidatis'
-    f, sigma, airm, date_obs = moon(obj_name, arm, **kwargs)[0:4]
-    lamba = lambda_ranges(obj_name, arm, n, s, plots_fit_cont, **kwargs)
-    poly_fit = [norm_slope(flux, wv, n) for (flux, wv) in zip(f, lamba)]
-    if plots_fit_cont:
-        fig_cont, ax_cont = plt.subplots(1, 1, figsize=(15, 5), layout='constrained')
-        offset = 0
-        for poly, wv, flux in zip(poly_fit[:2], lamba[:2], f[:2]):
-            ax_cont.plot(wv, poly + offset, lw=0.5, c='r')
-            ax_cont.plot(wv, flux + offset, lw=0.5, c='k')
-            offset = offset + 0.5*1e-13
-        ax_cont.set_ylabel('Continuoum fit', fontsize=14)
-        ax_cont.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
-        ax_cont.set_title('Masked lines', fontsize=20)
-        plt.show()
-        plt.clf()
+    f, sigma, airm, date_obs, q, w = moon(obj_name, xshoo_arm, dim='1D', **kwargs)#[0:4] #mask_tell_nd=mask_all,
+                                          #mode="pre_molecfit" if xshoo_arm == "UVB" else "post_molecfit", **kwargs)#[0:4]
+    #print(f[0].data)
+    #print(w[0].data)
+    #print(f[0].data[f[0].mask])
+    #print(w[0].data[f[0].mask])
+    # lambda_ranges(obj_name, xshoo_arm, n_poly, s, plots_fit_cont, **kwargs)
+    lamba_clipped = [lambda_ranges_v2(flux, wv, n_poly, s) for flux, wv in zip(f, w)]
+    mask_to_clip = [wv_clip.mask for wv_clip in lamba_clipped]
+    Ek_clipped = [np.ma.masked_array(flux.data, mask=m_clip) for flux, m_clip in zip(f, mask_to_clip)]
+    poly_k = [norm_slope(f_clip, wv_clip, n_poly) for f_clip, wv_clip in zip(Ek_clipped, lamba_clipped)]
+    f_norm = [flux/poly for (flux, poly) in zip(f, poly_k)]
+    sigma_norm = [err/poly for (err, poly) in zip(sigma, poly_k)]
 
-    f_norm = [flux/poly for (flux, poly) in zip(f, poly_fit)]
-    sigma_norm = [err/poly for (err, poly) in zip(sigma, poly_fit)]
-#
-    #f_median = np.ma.masked_where(mask_median, np.ma.median(f_norm, axis=0))
-    #lamba_median = np.ma.masked_where(mask_median, lamba[0].data)
-    #sigma_median = np.ma.masked_where(mask_median, np.ma.std(f_norm, axis=0))
-    #poly_median = np.ma.masked_where(mask_median, np.ma.median(poly_fit, axis=0))
-    if plots_fit_cont:
-        fig_norm, ax_norm = plt.subplots(figsize=(25, 5))
-        for f_n, wv in zip(f_norm, lamba):
-            ax_norm.plot(wv.data, f_n, lw=0.5)
-            #ax_norm.set_xscale('log')
-        ax_norm.set_ylabel('Normalized flux', fontsize=14)
-        ax_norm.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
-        ax_norm.set_title(f"{moon_loc} {arm} final flux normalization", fontsize=20)
-        plt.show()
-
+    # f_norm = [sigma_clip(flux, sigma=s, stdfunc=scipy.stats.iqr) for flux in f_norm]  # continuo
     mask_norm = [np.ma.getmask(f_n) for f_n in f_norm]
     mask_median = np.all(mask_norm, axis=0)
     f_median = np.ma.masked_where(mask_median, np.ma.median(f_norm, axis=0))
-    lamba_median = np.ma.masked_where(mask_median, lamba[0].data)
+    lamba_median = np.ma.masked_where(mask_median, lamba_clipped[0].data)
     sigma_median = np.ma.masked_where(mask_median, np.ma.std(f_norm, axis=0))
-    poly_median = np.ma.masked_where(mask_median, np.ma.median(poly_fit, axis=0))
+    poly_median = np.ma.masked_where(mask_median, np.ma.median(poly_k, axis=0))
+
+    off_res = 0
+    res_arr = [f_n - f_median for f_n in f_norm]
+    res_std = np.ma.median([np.ma.std(r) for r in res_arr])
+    off_res_nd = [0]
 
     if plots_fit_cont:
         fig_res, ax_res = plt.subplots(figsize=(20, 10))
-        off_res = 0
-        res_arr = []
-        off_res_nd = [0]
-        off_lamba = 0 if arm == 'UVB' else -35
-        for f_n, s_n, d in zip(f_norm, sigma_norm, date_obs):
-            ax_res.plot(lamba_median, f_n - f_median + off_res, lw=0.5)
+        wv_lims = kwargs.get('wv_lims', None)
+        std_pos = lamba_median[3*len(lamba_median)//4] if wv_lims is None \
+            else wv_lims[-1] - (wv_lims[-1] - wv_lims[0])//4
+        date_pos = lamba_median.data[len(lamba_median.data)//2] if wv_lims is None else (wv_lims[-1] + wv_lims[0])//2
+        for res, s_n, d in zip(res_arr, sigma_norm, date_obs):
+            ax_res.plot(lamba_median, res + off_res, lw=0.5)
             ax_res.fill_between(lamba_median, off_res - n_sigma*np.sqrt((s_n**2 + sigma_median**2)),
-                                off_res + n_sigma*np.sqrt((s_n**2 + sigma_median**2)), alpha=0.8, color='gray')
-            ax_res.annotate(f"{np.round(np.ma.std(f_n - f_median), 3)}", (lamba_median.data[-1] + off_lamba, off_res),)
-            ax_res.annotate(f"{d.partition('T')[-1]}", (lamba_median[len(lamba_median)//2], off_res), ha='center',
+                                off_res + n_sigma*np.sqrt((s_n**2 + sigma_median**2)), alpha=0.4, color='gray')
+            ax_res.annotate(f"{np.round(np.ma.std(res), 3)}", (std_pos, off_res),
+                            ha='center', path_effects=[patheffects.withStroke(linewidth=3, foreground='w')])
+            ax_res.annotate(f"{d.partition('T')[-1]}", (date_pos, off_res), ha='center',
                             path_effects=[patheffects.withStroke(linewidth=3, foreground='w')])
             if obj_name == 'maria' or obj_name == 'highlands':
                 off_res += n_sigma*0.02
             if obj_name == 'darkside':
                 off_res += n_sigma*0.1
-            res_arr.append(f_n - f_median)
             off_res_nd.append(off_res)
 
         ax_res.set_ylabel(r'$f_{i} - \overline{f}$', fontsize=14)
         ax_res.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
+        if obj_name == 'highlands':
+            ax_res.set_ylim(-0.04, 0.37)
+        if obj_name == 'maria':
+            ax_res.set_ylim(-0.04, 0.34)
         if obj_name == 'darkside':
             ax_res.set_ylim(-0.1, 0.5)
-        ax_res.set_title(f"{moon_loc} {arm} residue at ${n_sigma}\\sigma$", fontsize=20)
+        ax_res.set_title(f"{moon_loc} {xshoo_arm} residue at ${n_sigma}\\sigma$, $n={n_poly}$ and " + r"$\sigma_{clip}=$"
+                         f"${s}$", fontsize=20)
+        if wv_lims is not None:
+            ax_res.set_xlim(wv_lims[0], wv_lims[-1])
 
-        if obj_name != 'darkside':
-            kmeans = KMeans(n_clusters=2, random_state=0, n_init='auto').fit(res_arr)
-            for f_n, label, off in zip(f_norm, kmeans.labels_, off_res_nd):
-                ax_res.annotate(f"{label}", (lamba_median.data[0] + 20, off), ha='center',
-                                path_effects=[patheffects.withStroke(linewidth=3, foreground='w')])
-
+        label_pos = lamba_median.data[len(lamba_median.data)//4]if wv_lims is None \
+            else wv_lims[0] + (wv_lims[-1] - wv_lims[0])//4
+        for frame, off in enumerate(off_res_nd[:-1]):
+            ax_res.annotate(f"{frame + 1}", (label_pos, off), ha='center',
+                            path_effects=[patheffects.withStroke(linewidth=3, foreground='w')])
         plt.show()
-
-
-
-    #if plots_fit_cont:
-    #    fig_median, ax_median = plt.subplots(figsize=(25, 5))
-    #    ax_median.plot(lamba_median, f_median, lw=0.5)
-    #    ax_median.set_yscale('log')
-    #    ax_median.set_xscale('log')
-    #    ax_median.set_ylabel('Normalized flux', fontsize=14)
-    #    ax_median.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
-    #    ax_median.set_title(f"{moon_loc} {arm} median flux normalization", fontsize=20)
-    #    plt.show()
     if median_region:
         f_region_median = f_median*poly_median
-        return f_region_median, lamba_median
-    else:
-        return f_median, lamba_median
+        return f_region_median, lamba_median, sigma_median, res_std
+    return f_median, lamba_median
 
 
-def res(obj_name, arm, n, **kwargs):
-    f, sigma, airm, date, q_col, lamba = moon(obj_name, arm, norm=True, n_poly=n, **kwargs)  # clip
-    norm_median = np.ma.median(f, axis=0)
-    iqr = scipy.stats.iqr(f, axis=0)
-    f_not_clipped = moon(obj_name, arm, norm=True, **kwargs)[0]  # no clip
-    fig, ax = plt.subplots(figsize=(25, 5))
-    ax.plot(lamba[0].data, norm_median)
-    ax.set_yscale('log')
-    ax.set_xscale('log')
-    plt.show()
-    r = np.asarray([flux_norm - norm_median for flux_norm in f_not_clipped])
-    fig, ax = plt.subplots(figsize=(25, 5))
-    ax.plot(lamba[0], r[0])
-    plt.show()
-    sigma_r = np.asarray([np.sqrt(s**2 + iqr**2) for s in sigma])
-    if obj_name == 'highlands':
-        col, row = 3, 6
-    if obj_name == 'maria':
-        col, row = 4, 4
-    if obj_name == 'darkside':
-        col, row = 2, 2
-    fig, axs = plt.subplots(col, row, figsize=(20, 5), layout='constrained')
-    fig.suptitle(obj_name + ' ' + arm, fontsize=30)
-    for residue, l, err, ax in zip(r, lamba, sigma_r, fig.axes):
-        ax.plot(l, residue, 'k', lw=0.5)
-        ax.fill_between(l, -err, err, alpha=0.5)
-        ax.set_xlabel(r'$\lambda$ (nm)', fontsize=15)
-        ax.set_ylim(-0.1, 0.1)
-        ax.grid()
-
-    plt.show()
+def classify_moon_zones(Y, X, n_clusters=2, lamba_no_kmeans=None, plot=False):
+    if lamba_no_kmeans is not None:
+        prev_mask = np.ma.getmask(X)
+        no_kmeans_mask = mask_tellSpikes(X, lamba_no_kmeans)
+        mask_kmeans = np.logical_or.reduce([prev_mask, no_kmeans_mask])
+        Y = [np.ma.masked_array(y.data, mask=mask_kmeans) for y in Y]
+        if plot:
+            off = 0
+            for y in Y:
+                plt.plot(X, y + off)
+                off += 0.2
+            plt.show()
+    k_means = KMeans(n_clusters=n_clusters, n_init=1, random_state=0)
+    k_means.fit(Y)
+    k_means_cluster_centers = k_means.cluster_centers_
+    k_means_labels = pairwise_distances_argmin(Y, k_means_cluster_centers)
+    return k_means_labels
 
 
-def rms(obj_name, arm, n, s, mask_lamba_nd, lamba_eff, mask_tell, **kwargs):
+def rms(obj_name, xshoo_arm, n_poly, s, mask_lamba_nd, lamba_eff, mask_tell, plot_rms=False, **kwargs):
     s_to_n = []
     rms_ = []
     for lamba_range, l in zip(mask_lamba_nd, lamba_eff):
         print(f"We are in {l} nm")
-        f, lamba = fit_the_cont(obj_name, arm, n, s, n_sigma=None, plots_fit_cont=False, wv_lims=lamba_range,
+        f, lamba = fit_the_cont(obj_name, xshoo_arm, n_poly, s, n_sigma=None, plots_fit_cont=False, wv_lims=lamba_range,
                                 mask_tell_nd=mask_tell, **kwargs)
         f_cont = sigma_clip(f, sigma=s, stdfunc=scipy.stats.iqr)
-        #fig, ax = plt.subplots()
-        #fig.suptitle(f"$\\lambda = {l:.1f}$", fontsize=20)
-        #ax.plot(lamba, f_cont)
-        #plt.show()
+        if plot_rms:
+            fig, ax = plt.subplots()
+            fig.suptitle(f"$\\lambda = {l:.1f}$", fontsize=20)
+            ax.plot(lamba, f_cont)
+            plt.show()
         rms_i = np.ma.std(f_cont)
         rms_.append(rms_i)
         s_to_n.append(np.ma.median(f_cont)/rms_i)
 
-    #fig_, ax_ = plt.subplots(figsize=(15, 5))
-    #fig_.suptitle(f"{arm} in {obj_name}", fontsize=20)
-    #ax_.plot(lamba_eff, s_to_n, 'o')
-    #ax_.grid()
-    #ax_.set_xlabel(r'$\lambda$ (nm)', fontsize=12)
-    #ax_.set_ylabel(r'$S/N$', fontsize=12)
-    #plt.show()
+    if plot_rms:
+        fig_, ax_ = plt.subplots(figsize=(15, 5))
+        fig_.suptitle(f"{xshoo_arm} in {obj_name}", fontsize=20)
+        ax_.plot(lamba_eff, s_to_n, 'o')
+        ax_.grid()
+        ax_.set_xlabel(r'$\lambda$ (nm)', fontsize=12)
+        ax_.set_ylabel(r'$S/N$', fontsize=12)
+        plt.show()
 
     return s_to_n, lamba_eff
 
 
-def rel_mol_col(path, arm):
+def zoom_median_spectra(flux, lamba, wv_lims):
+    lower, upper = wv_lims
+    mask_lims = ~np.logical_and(lamba >= lower, lamba <= upper)
+    flux_with_zoom = np.ma.masked_array(flux, mask_lims)
+    lamba_with_zoom = np.ma.masked_array(lamba, mask_lims)
+    return flux_with_zoom, lamba_with_zoom
+
+
+def rel_mol_col(path, xshoo_arm):
     hdul = fits.open(path)
     fits_param = hdul[3].data
-    if arm == 'VIS':
+    if xshoo_arm == 'VIS':
         h2o = np.array(fits_param[24][1:])
         o2 = np.array(fits_param[25][1:])
         return h2o, o2
-    if arm == 'NIR':
+    if xshoo_arm == 'NIR':
         h2o = np.array(fits_param[32][1:])
         co2 = np.array(fits_param[33][1:])
         co = np.array(fits_param[34][1:])
@@ -555,81 +501,21 @@ def plot_atm_abundance(obj_name, arm, **kwargs):
     pass
 
 
-
-
-
-#def airMass_moon(obj_moon_arr, arm):
-    #fig, ax = plt.subplots(figsize=(14, 8))
-
-    #airm_arr = []
-    #for obj in obj_std_moon:
-        #airm = moon(obj_name, arm, dim='1D', counts=False, plot=False, figure=None, idx_arr=None, wv_lims=None,
-                    #arm_together=False, mask_tell_nd=None)
-
-'''
-def airMass_std(obj_std_arr, arm, moon=False):
-    """This function plots the evolution of the air mass of the previous telluric stars
-    during the night of the observation of the Moon.
-    obj_std_arr could be an array of the names of the telluric stars saved in
-    home/yiyo/moon_xshoo_pre_molecfit/ or home/yiyo/moon_xshoo_pre_molecfit/;
-    depending on the arm. """
-    fig, ax = plt.subplots(figsize=(14, 8))
-
-    for obj in obj_std_arr:
-        airm1, date1 = stdTell(obj, arm, dim='1D', counts=False, plot=False, ax=None, first=True)[2:4]
-        airm2, date2 = stdTell(obj, arm, dim='1D', counts=False, plot=False, ax=None, first=False)[2:4]
-        airm_arr = np.array([airm1, airm2])
-        date_arr = np.array([date1, date2])
-        times_arr = [date.partition('T')[-1] for date in date_arr]
-        times_arr = [pd.to_datetime(time) for time in times_arr]
-        ax.plot(times_arr, airm_arr, 'o:')
-        ax.annotate(obj, (times_arr[-1], airm_arr[-1]), textcoords='offset points', xytext=(0, 10), ha='center')
-    if moon:
-        airMass_moon()
-    date_form = dates.DateFormatter("%H:%M:%S")
-    ax.xaxis.set_major_formatter(date_form)
-    ax.set_xlabel('Observation time', fontsize=20)
-    ax.set_ylabel('Air mass', fontsize=20)
-    ax.grid()
-    plt.show()
-    pass
-'''
-
-#def airMass_moon()
-
-'''
-fig, axes = plt.subplots(5, 1, figsize=(20, 20), layout='constrained')
-std_tells = ['HD145631', 'HD90027', 'HD80781', '35ERI', 'HD31373']
-arms = ['UVB', 'VIS', 'NIR']
-
-# each star
-for std, ax in zip(std_tells, fig.axes):
-    ax.set_title(std, fontsize=12)
-    for a in arms:
-        stdTell(std, a, dim='1D', counts=False, plot=True, ax=ax)
-    ax.grid()
-    #ax.legend()
-    ax.set_ylim(0)
-ax.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
-
-plt.show()
-'''
 idx_highlands = np.arange(19)
 # telluric mask
-mask_VIS = [[635.6, 637.6], [686.54, 696.28], [759.10, 769.76], [927.00, 958.50], [980, 1022.3]]
-mask_NIR = [[1065, 1080], [1110, 1150], [1340, 1485], [1790, 2030], [2260, 2290], [2430, 2479]]
+mask_VIS = [[635.6, 637.6], [686.54, 696.28], [759.10, 769.76], [927, 1_022.3]]   # [927.00, 958.5], [980, 1022.3]]
+mask_NIR = [[1065, 1080], [1110, 1160], [1260, 1275], [1340, 1485], [1720, 2030], [2260, 2290], [2360, 3000]]
 mask_all = mask_VIS + mask_NIR
 
 # rms mask
-# UVB range starts from 318.2 nm
-wv_rms_UVB = [325.0, 339.8, 356.1, 373.5, 393.2, 414.5, 438.8, 466.4, 496.8, 531.0, 556.0]
-mask_rms_UVB = [[318.3, 331.5], [332.5, 347.1], [348.3, 364.1], [365.1, 382.5], [383.4, 403.3], [403.9, 425.9],
-                [427.2, 451.3], [453, 480.6], [482, 512.8], [514.5, 548], [545, 562.9]]
+# UVB range starts from 374 nm
+wv_rms_UVB = [374, 393.2, 414.5, 438.8, 466.4, 496.8, 531.0, 556.0]
+mask_rms_UVB = [[374., 382.5], [383.4, 403.3], [403.9, 425.9], [427.2, 451.3], [453, 480.6], [482, 512.8], [514.5, 548],
+                [545, 562.9]]
 # VIS range starts from 553.66 nm --> the range 980-1022.3 nm (1001.6 nm) is avoided due to bad behaviour
-wv_rms_VIS = [568, 585.9, 607.7, 629.5, 653.8, 682.1, 711.2, 742.6, 777.6, 815.8, 860.2, 904.3, 957.3]
+wv_rms_VIS = [568, 585.9, 607.7, 629.5, 653.8, 682.1, 711.2, 742.6, 777.6, 815.8, 860.2, 904.3]
 mask_rms_VIS = [[560.6, 574.7], [575.5, 596.2], [595.9, 618.5], [617.7, 642.3], [641.8, 668.1], [667.5, 696.8],
-                [696.0, 726.0], [726.6, 759.3], [761.7, 797.4], [796, 837.3], [836.2, 882.5], [880.9, 928.4],
-                [946.1, 984.9]]
+                [696.0, 726.0], [726.6, 759.3], [761.7, 797.4], [796, 837.3], [836.2, 882.5], [880.9, 928.4]]
 # NIR range starts from 1054.02 nm
 # --> the ranges 1341.3-1413.51 nm (1376.31 nm) and 1803.45-1937.04 nm (1867.86 nm) are avoided due to strong telluric
 # absorption
@@ -641,20 +527,149 @@ mask_rms_NIR = [[1067.35, 1112.76], [1112.77, 1162.22], [1162.22, 1216.28], [121
 lamba_eff_nd = [wv_rms_UVB, wv_rms_VIS, wv_rms_NIR]
 lamba_rms_mask = [mask_rms_UVB, mask_rms_VIS, mask_rms_NIR]
 
-#fig1, axs1 = plt.subplots(2, 2, figsize=(20, 10), layout='constrained')
-#moon('maria', 'NIR', dim='1D', counts=True, plot=True, figure=fig1,
-#     wv_lims=None, mask_tell_nd=None, norm=False, arm_together=True)
-#plt.show()
-#moon('highlands', 'VIS', dim='1D', counts=False, plot=True, figure=fig1,
-     #mask_tell_nd=mask_all, norm=False, arm_together=True)
-#moon('maria', 'NIR', dim='1D', counts=False, plot=True, figure=fig1,
-     #mask_tell_nd=mask_all, norm=False, arm_together=True)
-#fig1.suptitle('maria', fontsize=20)
-#plt.show()
+imb_k = np.array([0, 0, 0, 0, 1, 0,
+                  0, 1, 0, 0, 0, 1,
+                  1, 1, 1, 0, 1, 1])
+nub_k = np.array([0, 0, 0, 0,
+                  0, 0, 0, 0,
+                  0, 0, 0, 1,
+                  1, 1, 1, 1])
+nub_k_nir = np.array([0, 0, 0, 0,
+                      0, 0, 0, 0,
+                      0, 0, 0, 1,
+                      1, 1, -1, -1])  # no incluimos los dos últimos frames en el NIR
 
 
+# spectra together median region
+"""
+n_imbW_uvb = 4
+n_imbE_uvb = 4
+n_imbW_vis = 6
+n_imbE_vis = 6
+Imb_median_west = []
+Imb_median_east = []
+lambaImb_median_west = []
+lambaImb_median_east = []
+fig_def, ax_def = plt.subplots(1, 1, layout='constrained', figsize=(15, 5))
+for arm, n in zip(['UVB', 'VIS'], [[n_imbW_uvb, n_imbE_uvb], [n_imbW_vis, n_imbE_vis]]):
+    idx_arr = np.arange(0, 18) if arm == 'UVB' else None
+    Imb_west, lamda_west = fit_the_cont('highlands', arm, n_poly=n[0], s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                        plots_fit_cont=False, idx_nd=idx_arr, k=0, kmeans=imb_k,
+                                        median_region=True,
+                                        mode="pre_molecfit" if arm == "UVB" else "post_molecfit")[:2]
+    Imb_east, lamda_east = fit_the_cont('highlands', arm, n_poly=n[1], s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                        plots_fit_cont=False, idx_nd=idx_arr, k=1, kmeans=imb_k,
+                                        median_region=True,
+                                        mode="pre_molecfit" if arm == "UVB" else "post_molecfit")[:2]
+    Imb_median_west.append(Imb_west)
+    Imb_median_east.append(Imb_east)
+    lambaImb_median_west.append(lamda_west)
+    lambaImb_median_east.append(lamda_east)
+
+    if arm == 'UVB':
+        # ax_def.plot(lamda_west, Imb_west, lw=0.5, label='West Mare Imbrium', c='y')
+        # ax_def.plot(lamda_east, Imb_east, lw=0.5, label='East Mare Imbrium', c='b')
+        ax_def.plot(lamda_west, Imb_west, lw=0.5, label='West tycho crater', c='y')
+        ax_def.plot(lamda_east, Imb_east, lw=0.5, label='East tycho crater', c='b')
+    else:
+        ax_def.plot(lamda_west, Imb_west, lw=0.5, c='y')
+        ax_def.plot(lamda_east, Imb_east, lw=0.5, c='b')
+
+n_nubW_uvb = 5
+n_nubE_uvb = 5
+n_nubW_vis = 6
+n_nubE_vis = 6
+Nub_median_west = []
+Nub_median_east = []
+lambaNub_median_west = []
+lambaNub_median_east = []
+for arm, n in zip(['UVB', 'VIS'], [[n_nubW_uvb, n_nubE_uvb], [n_nubW_vis, n_nubE_vis]]):
+    Nub_west, lamda_west = fit_the_cont('maria', arm, n_poly=n[0], s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                        plots_fit_cont=False, k=0, kmeans=nub_k,
+                                        median_region=True,
+                                        mode="pre_molecfit" if arm == "UVB" else "post_molecfit")[:2]
+    Nub_east, lamda_east = fit_the_cont('maria', arm, n_poly=n[1], s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                        plots_fit_cont=False, k=1, kmeans=nub_k,
+                                        median_region=True,
+                                        mode="pre_molecfit" if arm == "UVB" else "post_molecfit")[:2]
+    Nub_median_west.append(Nub_west)
+    Nub_median_east.append(Nub_east)
+    lambaNub_median_west.append(lamda_west)
+    lambaNub_median_east.append(lamda_east)
+    ax_def.plot(lamda_west, Nub_west, lw=0.5, c='cyan')
+    ax_def.plot(lamda_east, Nub_east, lw=0.5, c='orange')
+
+n_nubW_nir = 6
+n_nubE_nir = 6
+Nub_west_nir, lamda_west_nir = fit_the_cont('maria', 'NIR', n_poly=n_nubW_nir, s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                            plots_fit_cont=False, k=0, kmeans=nub_k_nir,
+                                            median_region=True)[:2]
+Nub_east_nir, lamda_east_nir = fit_the_cont('maria', 'NIR', n_poly=n_nubE_nir, s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                            plots_fit_cont=False, k=1, kmeans=nub_k_nir,
+                                            median_region=True)[:2]
+Nub_median_west.append(Nub_west_nir)
+Nub_median_east.append(Nub_east_nir)
+lambaNub_median_west.append(lamda_west_nir)
+lambaNub_median_east.append(lamda_east_nir)
+#ax_def.plot(lamda_west_nir, Nub_west_nir, lw=0.5, label='West Mare Nubium', c='cyan')
+#ax_def.plot(lamda_east_nir, Nub_east_nir, lw=0.5, label='East Mare Nubium', c='orange')
+ax_def.plot(lamda_west_nir, Nub_west_nir, lw=0.5, label='West Mare Imbrium', c='cyan')
+ax_def.plot(lamda_east_nir, Nub_east_nir, lw=0.5, label='East Mare Imbrium', c='orange')
+
+n_fec_uvb = 4
+n_fec_vis = 6
+n_fec_nir = 4
+Fec_median = []
+lambaFec_median = []
+for arm, n in zip(['UVB', 'VIS', 'NIR'], [n_fec_uvb, n_fec_vis, n_fec_nir]):
+    Fec, lamda_i = fit_the_cont('darkside', arm, n_poly=n, s=1, n_sigma=1, mask_tell_nd=mask_all,
+                                plots_fit_cont=False, median_region=True,
+                                mode="pre_molecfit" if arm == "UVB" else "post_molecfit")[:2]
+    Fec_median.append(Fec)
+    lambaFec_median.append(lamda_i)
+    if arm == 'UVB':
+        ax_def.plot(lamda_i, Fec, lw=0.5, label='Mare Fecundidatis', c='k')
+    else:
+        ax_def.plot(lamda_i, Fec, lw=0.5, c='k')
+ax_def.legend()
+ax_def.set_xlabel(r'$\lambda$ (nm)', fontsize=14)
+y_label = 'erg ' + r'$cm^{-2} s^{-1} \AA^{-1}$'
+ax_def.set_ylabel(y_label, fontsize=14)
+ax_def.set_xscale('log')
+ax_def.set_yscale('log')
+ax_def.grid()
+plt.show()
+"""
+
+"""
+Na_lims = [585, 595]
+Ti_lims = [398, 400]
+Ba_lims = [552, 555]
+Ca_lims = [421, 424]
+Li_lims = [668, 672]
+Mn_lims = [401, 405]
+Fe_lims = [384, 387]
+Al_lims = [395, 398]
+Si_lims = [388, 392]
+abs1_lims = [980, 1020]
+abs2_lims = [2050, 2100]
+CO2_lims = [1430.6, 1445.1]
+
+fig4, ax4 = plt.subplots()
+# for f, lamba in zip([Imb_median_west[1], Imb_median_east[1]],
+#                    [lambaImb_median_west[1], lambaImb_median_east[1]]):
+zoom_f, zoom_l = zoom_median_spectra(Nub_median_west[1], lambaNub_median_west[1], Na_lims)
+ax4.plot(zoom_l, zoom_f, c='k')
+ax4.set_xlabel(r'$\lambda$ (nm)', fontsize=10)
+ax4.set_ylabel(y_label, fontsize=10)
+ax4.grid()
+fig4.suptitle('Imbrium median flux', fontsize=14)
+plt.show()
+"""
+
+"""
 fig3, axs3 = plt.subplots(1, 1, figsize=(15, 5))
-for c, region in zip(['y', 'aqua', 'k'], ['highlands', 'maria', 'darkside']):
+for c, region in zip(['cyan', 'r', 'green'], ['highlands', 'maria', 'darkside']):
     #for arm, rms_mask, lamba_eff in zip(['UVB', 'VIS', 'NIR'], lamba_rms_mask, lamba_eff_nd):
     for arm, rms_mask, lamba_eff in zip(['NIR'], [mask_rms_NIR], [wv_rms_NIR]):
         if region == 'highlands' and arm == 'NIR':
@@ -683,17 +698,5 @@ axs3.set_yscale('log')
 axs3.grid()
 axs3.legend()
 plt.show()
-
-'''
-fig2, axs2 = plt.subplots(2, 2, figsize=(70, 25), layout='constrained')
-# for arm in ['UVB', 'VIS']:
-for arm in ['VIS']:
-    moon('maria', arm, dim='1D', counts=False, plot=True, figure=fig2, idx_arr=None,
-         arm_together=True, wv_lims=[600, 650], mask_tell_nd=mask_VIS, norm=True)
-fig2.suptitle('Maria one single frame', fontsize=20)
-plt.show()
-'''
-
-#for arm, mask in zip(['UVB', 'VIS', 'NIR'], [None, mask_VIS, mask_NIR]):
-    #res('darkside', arm, mask_tell_nd=mask)
+"""
 
